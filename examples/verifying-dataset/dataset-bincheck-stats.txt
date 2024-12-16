@@ -1,0 +1,15 @@
+Dataset Statistics Summary
+=======================
+
+final Dataset:
+  Invalid datapoints: 4749
+  Total datapoints: 116739
+  Valid datapoints: 111990
+  Validity percentage: 95.93%
+
+final-pix2pix Dataset:
+  Invalid datapoints: 5257
+  Total datapoints: 61195
+  Valid datapoints: 55938
+  Validity percentage: 91.41%
+

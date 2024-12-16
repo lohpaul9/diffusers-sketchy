@@ -1039,16 +1039,16 @@ class UNet2DConditionModel(
 
     def forward(
         self,
-        sample: torch.Tensor,
+        sample: torch.Tensor, # latents
         timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor, # prompt text embedding
         class_labels: Optional[torch.Tensor] = None,
         timestep_cond: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
-        down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
-        mid_block_additional_residual: Optional[torch.Tensor] = None,
+        down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None, # cn down blocks
+        mid_block_additional_residual: Optional[torch.Tensor] = None, # cn mid block
         down_intrablock_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,

@@ -81,17 +81,11 @@ def log_validation(
     vae, text_encoder, tokenizer, unet, controlnet, args, accelerator, weight_dtype, step, is_final_validation=False
 ):
     logger.info("Running validation... ")
-        
-    # TODO: check if need to handle case where controlnet is a list
+
     if not is_final_validation:
-        if isinstance(controlnet, list):
-            controlnet = MultiControlNetModel([accelerator.unwrap_model(net) for net in controlnet])
-        else:
-            controlnet = accelerator.unwrap_model(controlnet)
+        controlnet = accelerator.unwrap_model(controlnet)
     else:
-        controlnet_image = ControlNetModel.from_pretrained(args.output_dir + "/controlnet_image", torch_dtype=weight_dtype)
-        controlnet_sketch = ControlNetModel.from_pretrained(args.output_dir + "/controlnet_sketch", torch_dtype=weight_dtype)
-        controlnet = MultiControlNetModel([controlnet_image, controlnet_sketch])
+        controlnet = ControlNetModel.from_pretrained(args.output_dir, torch_dtype=weight_dtype)
 
     pipeline = StableDiffusionControlNetPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -100,7 +94,6 @@ def log_validation(
         tokenizer=tokenizer,
         unet=unet,
         controlnet=controlnet,
-        guidance_scale=2,
         safety_checker=None,
         revision=args.revision,
         variant=args.variant,
@@ -152,7 +145,7 @@ def log_validation(
         for _ in range(args.num_validation_images):
             with inference_ctx:
                 image = pipeline(
-                    validation_prompt, [[validation_image, validation_sketch]], num_inference_steps=20, generator=generator
+                    validation_prompt, [validation_image, validation_sketch], num_inference_steps=20, generator=generator
                 ).images[0]
 
             images.append(image)
@@ -678,15 +671,14 @@ def make_train_dataset(args, tokenizer, accelerator):
             args.dataset_config_name,
             cache_dir=args.cache_dir,
             data_dir=args.train_data_dir,
-            num_proc=36 #PAUL
+            num_proc=16 #PAUL
         )
     else:
         if args.train_data_dir is not None:
             dataset = load_dataset(
                 args.train_data_dir,
                 cache_dir=args.cache_dir,
-                num_proc=36,
-                keep_in_memory=False #PAUL
+                num_proc=16 #PAUL
             )
         # See more about loading custom images at
         # https://huggingface.co/docs/datasets/v2.0.0/en/dataset_script
@@ -792,11 +784,6 @@ def make_train_dataset(args, tokenizer, accelerator):
     with accelerator.main_process_first():
         if args.max_train_samples is not None:
             dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
-        
-        # Add this block to limit the number of examples per epoch
-        if args.max_examples_per_epoch is not None:
-            dataset["train"] = dataset["train"].select(range(args.max_examples_per_epoch))
-        
         # Set the training transforms
         train_dataset = dataset["train"].with_transform(preprocess_train)
 
@@ -839,7 +826,6 @@ def main(args):
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        # kwargs_handlers=[accelerate.utils.DistributedDataParallelKwargs(find_unused_parameters=True)],
     )
 
     # Disable AMP for MPS.
@@ -902,12 +888,13 @@ def main(args):
 
     if args.controlnet_model_name_or_path:
         logger.info("Loading existing controlnet weights")
-        controlnet_image = ControlNetModel.from_pretrained(args.controlnet_model_name_or_path + "/controlnet_image")
-        controlnet_sketch = ControlNetModel.from_pretrained(args.controlnet_model_name_or_path + "/controlnet_sketch")
+        controlnet = MultiControlNetModel.from_pretrained(args.controlnet_model_name_or_path)
+
     else:
         logger.info("Initializing controlnet weights from unet")
         controlnet_image = ControlNetModel.from_unet(unet)
         controlnet_sketch = ControlNetModel.from_unet(unet)
+        controlnet = MultiControlNetModel([controlnet_image, controlnet_sketch])
 
     # Taken from [Sayak Paul's Diffusers PR #6511](https://github.com/huggingface/diffusers/pull/6511/files)
     def unwrap_model(model):
@@ -917,7 +904,6 @@ def main(args):
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        print("We are in the new accelerate version")
         # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
         def save_model_hook(models, weights, output_dir):
             if accelerator.is_main_process:
@@ -950,8 +936,7 @@ def main(args):
     vae.requires_grad_(False)
     unet.requires_grad_(False)
     text_encoder.requires_grad_(False)
-    controlnet_image.train()
-    controlnet_sketch.train()
+    controlnet.train()
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -963,14 +948,12 @@ def main(args):
                     "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
                 )
             unet.enable_xformers_memory_efficient_attention()
-            controlnet_image.enable_xformers_memory_efficient_attention()
-            controlnet_sketch.enable_xformers_memory_efficient_attention()
+            controlnet.enable_xformers_memory_efficient_attention()
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
 
     if args.gradient_checkpointing:
-        controlnet_image.enable_gradient_checkpointing()
-        controlnet_sketch.enable_gradient_checkpointing()
+        controlnet.enable_gradient_checkpointing()
 
     # Check that all trainable models are in full precision
     low_precision_error_string = (
@@ -978,14 +961,9 @@ def main(args):
         " doing mixed precision training, copy of the weights should still be float32."
     )
 
-    if unwrap_model(controlnet_image).dtype != torch.float32:
+    if unwrap_model(controlnet).dtype != torch.float32:
         raise ValueError(
-            f"Controlnet loaded as datatype {unwrap_model(controlnet_image).dtype}. {low_precision_error_string}"
-        )
-    
-    if unwrap_model(controlnet_sketch).dtype != torch.float32:
-        raise ValueError(
-            f"Controlnet loaded as datatype {unwrap_model(controlnet_sketch).dtype}. {low_precision_error_string}"
+            f"Controlnet loaded as datatype {unwrap_model(controlnet).dtype}. {low_precision_error_string}"
         )
 
     # Enable TF32 for faster training on Ampere GPUs,
@@ -1012,8 +990,7 @@ def main(args):
         optimizer_class = torch.optim.AdamW
 
     # Optimizer creation
-    params_to_optimize = list(controlnet_image.parameters()) + list(controlnet_sketch.parameters())
-
+    params_to_optimize = controlnet.parameters()
     optimizer = optimizer_class(
         params_to_optimize,
         lr=args.learning_rate,
@@ -1049,8 +1026,8 @@ def main(args):
     )
 
     # Prepare everything with our `accelerator`.
-    controlnet_image, controlnet_sketch, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        controlnet_image, controlnet_sketch, optimizer, train_dataloader, lr_scheduler
+    controlnet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        controlnet, optimizer, train_dataloader, lr_scheduler
     )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
@@ -1080,7 +1057,6 @@ def main(args):
 
         # tensorboard cannot handle list types for config
         tracker_config.pop("validation_prompt")
-        tracker_config.pop("validation_sketch")
         tracker_config.pop("validation_image")
 
         accelerator.init_trackers(args.tracker_project_name, config=tracker_config)
@@ -1137,7 +1113,7 @@ def main(args):
     image_logs = None
     for epoch in range(first_epoch, args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(controlnet_image, controlnet_sketch):
+            with accelerator.accumulate(controlnet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
@@ -1158,38 +1134,17 @@ def main(args):
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"], return_dict=False)[0]
 
-                cond_image = batch["conditioning_image_pixel_values"].to(dtype=weight_dtype)
-                cond_sketch = batch["conditioning_sketch_pixel_values"].to(dtype=weight_dtype)
+                controlnet_image = batch["conditioning_image_pixel_values"].to(dtype=weight_dtype)
+                controlnet_image = batch["conditioning_sketch_pixel_values"].to(dtype=weight_dtype)
 
-                down_block_res_samples_image, mid_block_res_sample_image = controlnet_image(
+                down_block_res_samples, mid_block_res_sample = controlnet(
                     noisy_latents,
                     timesteps,
                     encoder_hidden_states=encoder_hidden_states,
-                    controlnet_cond=cond_image,
+                    controlnet_cond=[controlnet_image, controlnet_sketch],
+                    conditioning_scale=[0.5,0.5],
                     return_dict=False,
                 )
-
-                down_block_res_samples_sketch, mid_block_res_sample_sketch = controlnet_sketch(
-                    noisy_latents,
-                    timesteps,
-                    encoder_hidden_states=encoder_hidden_states,
-                    controlnet_cond=cond_sketch,
-                    return_dict=False,
-                )
-
-                # print("Shapes: ", down_block_res_samples_1.shape, down_block_res_samples_2.shape, mid_block_res_sample_1.shape, mid_block_res_sample_2.shape)
-                # print("down_block_res_samples_1: ", type(down_block_res_samples_1), len(down_block_res_samples_1), down_block_res_samples_1[0].shape)
-                # print("down_block_res_samples_2: ", type(down_block_res_samples_2), len(down_block_res_samples_2), down_block_res_samples_2[0].shape)
-                # print("mid_block_res_sample_1: ", type(mid_block_res_sample_1), mid_block_res_sample_1.shape)
-                # print("mid_block_res_sample_2: ", type(mid_block_res_sample_2), mid_block_res_sample_2.shape)
-
-                down_block_res_samples = [down_block_res_samples_image[i] + down_block_res_samples_sketch[i] for i in range(len(down_block_res_samples_image))]
-                mid_block_res_sample = mid_block_res_sample_image + mid_block_res_sample_sketch
-
-
-                # print("down_block_res_samples: ", type(down_block_res_samples), len(down_block_res_samples), down_block_res_samples[0].shape)
-                # print("mid_block_res_sample: ", type(mid_block_res_sample), mid_block_res_sample.shape)
-
 
                 # Predict the noise residual
                 model_pred = unet(
@@ -1214,7 +1169,7 @@ def main(args):
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    params_to_clip = list(controlnet_image.parameters()) + list(controlnet_sketch.parameters())
+                    params_to_clip = controlnet.parameters()
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
@@ -1257,7 +1212,7 @@ def main(args):
                             text_encoder,
                             tokenizer,
                             unet,
-                            [controlnet_image, controlnet_sketch],
+                            controlnet,
                             args,
                             accelerator,
                             weight_dtype,
@@ -1274,13 +1229,8 @@ def main(args):
     # Create the pipeline using using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        # controlnet_image = unwrap_model(controlnet_image)
-        controlnet_image = unwrap_model(controlnet_image)
-        controlnet_image.save_pretrained(args.output_dir + "/controlnet_image")
-
-        controlnet_sketch = unwrap_model(controlnet_sketch)
-        controlnet_sketch.save_pretrained(args.output_dir + "/controlnet_sketch")
-
+        controlnet = unwrap_model(controlnet)
+        controlnet.save_pretrained(args.output_dir)
 
         # Run a final round of validation.
         image_logs = None

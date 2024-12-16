@@ -181,3 +181,8 @@ class MultiControlNetModel(ModelMixin):
             )
 
         return cls(controlnets)
+    
+    def enable_gradient_checkpointing(self):
+        for net in self.nets:
+            net.enable_gradient_checkpointing()
+        return
