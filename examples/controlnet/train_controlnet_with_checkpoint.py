@@ -939,28 +939,28 @@ def main(args):
                     i -= 1
 
         def load_model_hook(models, input_dir):
-            i = 0
+            i = len(models) - 1
             while len(models) > 0:
                 # pop models so that they are not loaded again
                 model = models.pop()
 
-                controlnet_folder = "controlnet"
-
-                # load diffusers style into model
                 if i == 0:
-                    path = "controlnet_image"
+                    sub_model_path = "controlnet/controlnet_image"
                 elif i == 1:
-                    path = "controlnet_sketch"
+                    sub_model_path = "controlnet/controlnet_sketch"
                 else:
                     raise ValueError("Invalid controlnet index")
                 
-                input_dir = os.path.join(input_dir, controlnet_folder)
+                sub_dir = os.path.join(input_dir, sub_model_path)
+                print("Loading model from: ", sub_dir)
                 
-                load_model = ControlNetModel.from_pretrained(input_dir, subfolder=path)
+                load_model = ControlNetModel.from_pretrained(sub_dir)
                 model.register_to_config(**load_model.config)
 
                 model.load_state_dict(load_model.state_dict())
                 del load_model
+
+                i -= 1
 
         accelerator.register_save_state_pre_hook(save_model_hook)
         accelerator.register_load_state_pre_hook(load_model_hook)

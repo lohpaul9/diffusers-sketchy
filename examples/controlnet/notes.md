@@ -21,7 +21,7 @@ accelerate launch --mixed_precision="fp16" --multi_gpu train_controlnet_with_che
  --validation_prompt "Add a green and blue baby walker" "Add a woman in a gray sleeveless top and blue jeans, seated on the floor with a brush" \
  --train_batch_size=6 \
  --mixed_precision="fp16" \
- --tracker_project_name="controlnet-demo" \
+ --tracker_project_name="controlnet" \
  --cache_dir="/bigdrive/huggingface" \
  --checkpointing_steps=500 \
  --seed=42 \
@@ -29,10 +29,9 @@ accelerate launch --mixed_precision="fp16" --multi_gpu train_controlnet_with_che
  --use_8bit_adam \
  --gradient_checkpointing \
  --gradient_accumulation_steps=4 \
- --num_train_epochs=8 \
- --controlnet_model_name_or_path=$OUTPUT_DIR
+ --num_train_epochs=2 \
+ --controlnet_model_name_or_path="output_model_trained_on_8hrs" 
 ```
- --max_train_samples=40000
  --resume_from_checkpoint=checkpoint-1000
 
 Original:
