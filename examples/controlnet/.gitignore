@@ -1,0 +1,5 @@
+output_model/
+output_model_old/
+wandb/
+env/
+*.png

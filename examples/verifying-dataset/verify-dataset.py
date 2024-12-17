@@ -55,7 +55,13 @@ def check_image_set(base_path, suffixes=['_0', '_1', '_2', '_3']):
         mask = load_image_as_array(f"{base_name}_2.png")
 
         # Convert mask to binary (0 or 1)
-        mask_binary = (mask > 128).astype(np.float32)
+        if mask.dtype == np.bool:
+            mask_binary = mask
+        elif mask.dtype == np.uint8:
+            # the mask is not actually binary, and has weird tapering at the side
+            mask_binary = (mask > 10).astype(np.float32)
+        else:
+            raise ValueError("mask is not a boolean or uint8")
         
         # Calculate actual differences
         diff = np.abs(source - target).mean(axis=2)
@@ -68,8 +74,10 @@ def check_image_set(base_path, suffixes=['_0', '_1', '_2', '_3']):
         
         if mask_area > 0:
             overlap_ratio = overlap / mask_area
-            if overlap_ratio < 0.2:  # Less than 20% overlap
+            if overlap_ratio < 0.7:  # Less than 40% overlap
                 errors.append(f"Low overlap between mask and actual differences: {overlap_ratio:.2f}")
+        else:
+            raise ValueError(f"Mask area is 0 for {base_name}")
 
     # Add sketch binary check
     sketch_path = f"{base_name}_3.png"
@@ -82,6 +90,7 @@ def check_image_set(base_path, suffixes=['_0', '_1', '_2', '_3']):
                 errors.append(f"Sketch image {sketch_path} is not properly binarized. Found values: {unique_values}")
         except Exception as e:
             errors.append(f"Error checking sketch binarization {sketch_path}: {str(e)}")
+            raise ValueError(f"Error checking sketch binarization {sketch_path}: {str(e)}")
 
     return errors
 
@@ -112,6 +121,7 @@ def validate_directory(dir_name, root_dir):
     
     dir_path = os.path.join(root_dir, dir_name)
     if not os.path.isdir(dir_path):
+        print(f"Directory {dir_name} does not exist")
         return {}, 0
         
     try:
@@ -129,7 +139,7 @@ def validate_directory(dir_name, root_dir):
                 errors = check_image_set(base_name)
                 if errors:
                     all_errors[base_name] = errors
-                    print(f"Found errors in image set {base_name}: {errors}")  # Debug output
+                    # print(f"Found errors in image set {base_name}: {errors}")  # Debug output
                     raise Exception(f"Image set check failed: {errors}")
                 total_checked += 1
                 
@@ -143,14 +153,14 @@ def validate_directory(dir_name, root_dir):
         # Move problematic directory to error_directories
         error_path = os.path.join(error_dir, dir_name)
         try:
-            print(f"Attempting to move {dir_path} to {error_path}")  # Debug output
+            # print(f"Attempting to move {dir_path} to {error_path}")  # Debug output
             # Remove destination directory if it already exists
             if os.path.exists(error_path):
                 print(f"Removing existing directory at {error_path}")  # Debug output
                 shutil.rmtree(error_path)
             # Move the problematic directory
             shutil.move(dir_path, error_path)
-            print(f"Successfully moved problematic directory {dir_name} to error_directories due to: {str(e)}")
+            # print(f"Successfully moved problematic directory {dir_name} to error_directories due to: {str(e)}")
         except Exception as move_error:
             print(f"Failed to move directory {dir_name}: {str(move_error)}")
             
@@ -174,14 +184,14 @@ def validate_dataset(root_dir):
         futures = []
         for dir_name in directories:
             futures.append(executor.submit(validate_dir_partial, dir_name))
-            print(f"Submitted {dir_name} for validation")
+        print(f"Submitted {len(futures)} directories for validation")
 
         # Process results as they complete
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             try:
                 dir_errors, dir_total = future.result()
-                if dir_errors:
-                    print(f"Found errors in directory: {list(dir_errors.keys())[0]}")  # Debug output
+                # if dir_errors:
+                #     print(f"Found errors in directory: {list(dir_errors.keys())[0]}")  # Debug output
                 if (i + 1) % 500 == 0:
                     print(f"Processed {i + 1} of {directory_len} directories")
                 
@@ -214,10 +224,25 @@ if __name__ == '__main__':
     with open(error_output_path, 'w') as f:
         json.dump(errors, f, indent=2)
 
+    print("Errors saved to", error_output_path)
     # Print summary
     print("\nValidation Summary:")
     print(f"Total image sets with errors: {len(errors)}")
+
+    # check the number of errors due to image "low overlap"
+    low_overlap_errors = 0
+    for path, error_list in errors.items():
+        for error in error_list:
+            if "Low overlap" in error:
+                low_overlap_errors += 1
+    print(f"Number of errors due to low overlap: {low_overlap_errors}")
+
     # for path, error_list in errors.items():
     #     print(f"\n{path}:")
     #     for error in error_list:
     #         print(f"  - {error}")
+
+
+    # check_image_set("/bigdrive/datasets/sketchy2pix/final/5668a28d65d0422d/5668a28d65d0422d")
+    # check_image_set("/bigdrive/datasets/sketchy2pix/final/468193/468193")
+    # print("done")

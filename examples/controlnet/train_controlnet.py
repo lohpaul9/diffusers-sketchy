@@ -1277,10 +1277,11 @@ def main(args):
         # controlnet_image = unwrap_model(controlnet_image)
         controlnet_image = unwrap_model(controlnet_image)
         controlnet_image.save_pretrained(args.output_dir + "/controlnet_image")
+        controlnet_image.push_to_hub("SketchyBusinessControlNet_image")
 
         controlnet_sketch = unwrap_model(controlnet_sketch)
         controlnet_sketch.save_pretrained(args.output_dir + "/controlnet_sketch")
-
+        controlnet_sketch.push_to_hub("SketchyBusinessControlNet_sketch")
 
         # Run a final round of validation.
         image_logs = None

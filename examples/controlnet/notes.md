@@ -6,7 +6,7 @@ export MODEL_DIR="stable-diffusion-v1-5/stable-diffusion-v1-5"
 
 Running commands:
 ```
-accelerate launch --mixed_precision="fp16" --multi_gpu train_controlnet.py \
+accelerate launch --mixed_precision="fp16" --multi_gpu train_controlnet_with_checkpoint.py \
  --pretrained_model_name_or_path=$MODEL_DIR \
  --output_dir=$OUTPUT_DIR \
  --dataset_name=genecodes/sketchybusiness \
